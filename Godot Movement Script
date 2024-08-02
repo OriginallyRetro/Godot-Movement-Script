@@ -1,100 +1,52 @@
 extends CharacterBody3D
+var SPEED = 5.0
+var JUMP_VELOCITY = 4
+const CAMERA_ROTATION_SPEED = 1.8
+var SPRINT_MULTIPLIER = 2  # Multiplier for sprinting speed
 
-# Constant for the speed at which the character moves.
-const SPEED = 5.0
-
-# Constant for the initial velocity of the character's jump.
-const JUMP_VELOCITY = 4.5
-
-# Constant for the speed of camera rotation when using keyboard controls.
-const CAMERA_ROTATION_SPEED = 6.0
-
-# Sensitivity for mouse input to control camera rotation speed.
-const MOUSE_SENSITIVITY = 0.03
-
-# Smoothing factor for mouse input to prevent abrupt changes.
-const MOUSE_SMOOTHING = 0.5
-
-# Maximum rotation speed to prevent excessive spinning.
-const MAX_ROTATION_SPEED = 1.0
-
-# Gravity is fetched from the project settings. This makes sure the gravity is consistent with other physics bodies in the game.
-var gravity = ProjectSettings.get_setting("physics/3d/default_gravity")
-
-# @onready keyword initializes the variable once the node is added to the scene tree. 
-# These are references to the neck and camera nodes in the scene.
+# Get the gravity from the project settings to be synced with RigidDynamicBody nodes.
+var gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity")
 @onready var neck := $Neck
 @onready var camera := $Neck/Camera3D
 
-# Previous frame's input values for smoothing
-var last_mouse_input = Vector2.ZERO
-
-# This function handles specific types of input that aren't processed elsewhere.
-# It is used for handling mouse input events.
 func _unhandled_input(event: InputEvent) -> void:
-	# Check if the input event is a mouse button event.
 	if event is InputEventMouseButton:
-		# Capture the mouse cursor, hiding it and locking it to the center of the screen.
 		Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
-	
-	# Check if the cancel action (e.g., pressing the Escape key) is triggered.
 	elif event.is_action_pressed("ui_cancel"):
-		# Make the mouse cursor visible and free it from the center of the screen.
 		Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
-	
-	# If the mouse is captured (hidden and centered)...
 	if Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
-		# Check if the mouse is moving.
 		if event is InputEventMouseMotion:
-			# Interpolate between last input and current input for smoother transitions.
-			var mouse_input = Vector2(-event.relative.x, -event.relative.y)
-			mouse_input = last_mouse_input.lerp(mouse_input, MOUSE_SMOOTHING)
-			# Scale the rotation to make it less sensitive and apply smoothing.
-			neck.rotate_y(clamp(mouse_input.x * MOUSE_SENSITIVITY, -MAX_ROTATION_SPEED, MAX_ROTATION_SPEED))
-			camera.rotate_x(clamp(mouse_input.y * MOUSE_SENSITIVITY, -MAX_ROTATION_SPEED, MAX_ROTATION_SPEED))
-			# Clamp the camera's rotation to prevent it from flipping over completely.
-			# Limits the up and down camera rotation between -30 and 60 degrees.
+			neck.rotate_y(-event.relative.x * 0.01)
+			camera.rotate_x(-event.relative.y * 0.01)
 			camera.rotation.x = clamp(camera.rotation.x, deg_to_rad(-30), deg_to_rad(60))
-			last_mouse_input = mouse_input
 
-# This function is called every physics frame (e.g., 60 times per second) to process physics-related code.
-func _physics_process(delta):
-	# If the character is not on the floor, apply gravity to the vertical velocity.
+func _physics_process(delta: float) -> void:
+	# Add the gravity.
 	if not is_on_floor():
-		# Delta refers to the time elapsed since the last frame.
 		velocity.y -= gravity * delta
 
-	# Handle the jump action.
-	# If the jump action (e.g., pressing the Space key) is just pressed and the character is on the floor...
+	# Handle Jump.
 	if Input.is_action_just_pressed("ui_accept") and is_on_floor():
-		# Set the vertical velocity to the jump velocity to make the character jump.
 		velocity.y = JUMP_VELOCITY
 
-	# Get the input direction from user input and handle movement/deceleration.
-	# Input.get_vector returns a Vector2 based on input from left, right, forward, and backward actions.
-	var input_dir = Input.get_vector("Left", "Right", "Forward", "Backward")
-	
-	# Calculate the direction based on the neck's transformation and input direction.
-	# Transforming the 2D input direction into a 3D direction based on the neck's orientation.
+	# Check if the shift key is pressed for sprinting.
+	var is_sprinting = Input.is_action_pressed("Shift")
+
+	# Get the input direction and handle the movement/deceleration.
+	var input_dir := Input.get_vector("Left", "Right", "Forward", "Backward")
 	var direction = (neck.transform.basis * Vector3(input_dir.x, 0, input_dir.y)).normalized()
-	
-	# If there is input in any direction...
 	if direction:
-		# Set the character's velocity based on the direction and speed.
-		velocity.x = direction.x * SPEED
-		velocity.z = direction.z * SPEED
+		var speed = SPEED
+		if is_sprinting:
+			speed *= SPRINT_MULTIPLIER
+		velocity.x = direction.x * speed
+		velocity.z = direction.z * speed
 	else:
-		# If no input direction, smoothly reduce the character's velocity to zero (decelerate).
 		velocity.x = move_toward(velocity.x, 0, SPEED)
 		velocity.z = move_toward(velocity.z, 0, SPEED)
 
-	# Move the character and slide along surfaces using the current velocity.
 	move_and_slide()
 
-	# Handle camera rotation using arrow keys
-	_handle_camera_rotation(delta)
-
-# This function handles the camera rotation using arrow keys.
 func _handle_camera_rotation(delta: float) -> void:
 	# Check if the left arrow key is pressed.
 	if Input.is_action_pressed("ui_left"):
@@ -107,15 +59,17 @@ func _handle_camera_rotation(delta: float) -> void:
 		neck.rotate_y(-CAMERA_ROTATION_SPEED * delta)
 	
 	# Check if the up arrow key is pressed.
-	if Input.is_action_pressed("ui_up"):
+	if Input.is_action_pressed("ui_down"):
 		# Rotate the camera up around the X-axis.
 		camera.rotate_x(-CAMERA_ROTATION_SPEED * delta)
 	
 	# Check if the down arrow key is pressed.
-	if Input.is_action_pressed("ui_down"):
+	if Input.is_action_pressed("ui_up"):
 		# Rotate the camera down around the X-axis.
 		camera.rotate_x(CAMERA_ROTATION_SPEED * delta)
 	
 	# Clamp the camera's rotation to prevent excessive up/down movement.
 	# Limits the camera rotation to prevent flipping over.
-	camera.rotation.x = clamp(camera.rotation.x, deg_to_rad(-30), deg_to_rad(60))
+	camera.rotation.x = clamp(camera.rotation.x, deg_to_rad(-40), deg_to_rad(60))
+
+
