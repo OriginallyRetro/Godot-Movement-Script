@@ -1,13 +1,19 @@
 extends CharacterBody3D
+
 var SPEED = 5.0
 var JUMP_VELOCITY = 4
-const CAMERA_ROTATION_SPEED = 1.8
+var CROUCH_SPEED = 2.0  # Speed when crouching
+var CROUCH_HEIGHT = 0.5  # Height when crouching
+var NORMAL_HEIGHT = 1.0  # Normal height
+const CAMERA_ROTATION_SPEED = 1.5
 var SPRINT_MULTIPLIER = 2  # Multiplier for sprinting speed
 
 # Get the gravity from the project settings to be synced with RigidDynamicBody nodes.
 var gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity")
 @onready var neck := $Neck
 @onready var camera := $Neck/Camera3D
+
+var is_crouching = false
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
@@ -32,6 +38,9 @@ func _physics_process(delta: float) -> void:
 	# Check if the shift key is pressed for sprinting.
 	var is_sprinting = Input.is_action_pressed("Shift")
 
+	# Check if the crouch key is pressed.
+	is_crouching = Input.is_action_pressed("Crouch")
+
 	# Get the input direction and handle the movement/deceleration.
 	var input_dir := Input.get_vector("Left", "Right", "Forward", "Backward")
 	var direction = (neck.transform.basis * Vector3(input_dir.x, 0, input_dir.y)).normalized()
@@ -39,6 +48,12 @@ func _physics_process(delta: float) -> void:
 		var speed = SPEED
 		if is_sprinting:
 			speed *= SPRINT_MULTIPLIER
+		if is_crouching:
+			speed *= CROUCH_SPEED
+			# Adjust the height for crouching
+			scale.y = CROUCH_HEIGHT
+		else:
+			scale.y = NORMAL_HEIGHT
 		velocity.x = direction.x * speed
 		velocity.z = direction.z * speed
 	else:
@@ -71,5 +86,3 @@ func _handle_camera_rotation(delta: float) -> void:
 	# Clamp the camera's rotation to prevent excessive up/down movement.
 	# Limits the camera rotation to prevent flipping over.
 	camera.rotation.x = clamp(camera.rotation.x, deg_to_rad(-40), deg_to_rad(60))
-
-
