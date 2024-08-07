@@ -2,9 +2,14 @@ extends CharacterBody3D
 
 var SPEED = 5.0
 var JUMP_VELOCITY = 4
-var CROUCH_SPEED = 2.0  # Speed when crouching
+var CROUCH_SPEED = 1.5  # Speed when crouching
 var CROUCH_HEIGHT = 0.5  # Height when crouching
 var NORMAL_HEIGHT = 1.0  # Normal height
+var SLIDE_HEIGHT = 0.3  # Height when sliding
+var SLIDE_SPEED = 22.0  # Initial speed when sliding
+var SLIDE_FRICTION = 0.3  # Friction to slow down sliding
+var SLIDE_DURATION = 2.5  # Duration of the slide in seconds
+const AK_ROTATION_SPEED = 3.5
 const CAMERA_ROTATION_SPEED = 1.5
 var SPRINT_MULTIPLIER = 2  # Multiplier for sprinting speed
 
@@ -14,6 +19,9 @@ var gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity")
 @onready var camera := $Neck/Camera3D
 
 var is_crouching = false
+var is_sliding = false
+var slide_timer = 0.0  # Time elapsed since the slide started
+var slide_direction: Vector3 = Vector3.ZERO  # Direction during the slide
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
@@ -30,7 +38,18 @@ func _physics_process(delta: float) -> void:
 	# Add the gravity.
 	if not is_on_floor():
 		velocity.y -= gravity * delta
+	#Handle arrow keys
+	if Input.is_action_pressed("ui_left"):
+		neck.rotate_y(AK_ROTATION_SPEED * delta)
+	
+	if Input.is_action_pressed("ui_right"):
+		neck.rotate_y(-AK_ROTATION_SPEED  * delta)
 
+	if Input.is_action_pressed("ui_up"):
+		camera.rotate_x(AK_ROTATION_SPEED * delta)
+	
+	if Input.is_action_pressed("ui_down"):
+		camera.rotate_x(-AK_ROTATION_SPEED * delta)
 	# Handle Jump.
 	if Input.is_action_just_pressed("ui_accept") and is_on_floor():
 		velocity.y = JUMP_VELOCITY
@@ -41,48 +60,65 @@ func _physics_process(delta: float) -> void:
 	# Check if the crouch key is pressed.
 	is_crouching = Input.is_action_pressed("Crouch")
 
-	# Get the input direction and handle the movement/deceleration.
+	# Check if the slide key is pressed.
+	var should_slide = Input.is_action_pressed("Slide")
+	
+	# Calculate the input direction
 	var input_dir := Input.get_vector("Left", "Right", "Forward", "Backward")
 	var direction = (neck.transform.basis * Vector3(input_dir.x, 0, input_dir.y)).normalized()
-	if direction:
-		var speed = SPEED
-		if is_sprinting:
-			speed *= SPRINT_MULTIPLIER
-		if is_crouching:
-			speed *= CROUCH_SPEED
-			# Adjust the height for crouching
-			scale.y = CROUCH_HEIGHT
+	
+	if should_slide and not is_sliding:
+		# Start sliding
+		is_sliding = true
+		slide_timer = SLIDE_DURATION
+		slide_direction = direction  # Store the direction when the slide starts
+	
+	if is_sliding:
+		if Input.is_action_pressed("ui_accept"):  # Check for spacebar press
+			is_sliding = false
+			slide_timer = 0.0  # Reset slide timer to stop sliding
+			
+		elif slide_timer > 0:
+			# Reduce the remaining time
+			slide_timer -= delta
+			# Calculate the sliding speed based on the remaining time
+			var time_fraction = max(slide_timer / SLIDE_DURATION, 0)  # Prevent negative values
+			var current_slide_speed = SLIDE_SPEED * time_fraction
+			# Adjust height for sliding
+			scale.y = SLIDE_HEIGHT
+			# Apply sliding speed and friction
+			velocity.x = slide_direction.x * current_slide_speed
+			velocity.z = slide_direction.z * current_slide_speed
+			velocity.x *= (1 - SLIDE_FRICTION)
+			velocity.z *= (1 - SLIDE_FRICTION)
+			# Stop sliding when time runs out
+			if slide_timer <= 0:
+				is_sliding = false
 		else:
-			scale.y = NORMAL_HEIGHT
-		velocity.x = direction.x * speed
-		velocity.z = direction.z * speed
+			is_sliding = false
 	else:
-		velocity.x = move_toward(velocity.x, 0, SPEED)
-		velocity.z = move_toward(velocity.z, 0, SPEED)
+		# Handle regular movement and crouching
+		if direction:
+			var speed = SPEED
+			if is_sprinting:
+				speed *= SPRINT_MULTIPLIER
 
+			if is_crouching:
+				speed *= CROUCH_SPEED
+				# Adjust the height for crouching
+				scale.y = CROUCH_HEIGHT
+			else:
+				scale.y = NORMAL_HEIGHT
+
+			velocity.x = direction.x * speed
+			velocity.z = direction.z * speed
+		else:
+			velocity.x = move_toward(velocity.x, 0, SPEED)
+			velocity.z = move_toward(velocity.z, 0, SPEED)
+			
+	camera.rotation.x = clamp(camera.rotation.x, deg_to_rad(-40), deg_to_rad(60))
 	move_and_slide()
 
 func _handle_camera_rotation(delta: float) -> void:
-	# Check if the left arrow key is pressed.
-	if Input.is_action_pressed("ui_left"):
-		# Rotate the neck to the left around the Y-axis.
-		neck.rotate_y(CAMERA_ROTATION_SPEED * delta)
-	
-	# Check if the right arrow key is pressed.
-	if Input.is_action_pressed("ui_right"):
-		# Rotate the neck to the right around the Y-axis.
-		neck.rotate_y(-CAMERA_ROTATION_SPEED * delta)
-	
-	# Check if the up arrow key is pressed.
-	if Input.is_action_pressed("ui_down"):
-		# Rotate the camera up around the X-axis.
-		camera.rotate_x(-CAMERA_ROTATION_SPEED * delta)
-	
-	# Check if the down arrow key is pressed.
-	if Input.is_action_pressed("ui_up"):
-		# Rotate the camera down around the X-axis.
-		camera.rotate_x(CAMERA_ROTATION_SPEED * delta)
-	
-	# Clamp the camera's rotation to prevent excessive up/down movement.
-	# Limits the camera rotation to prevent flipping over.
 	camera.rotation.x = clamp(camera.rotation.x, deg_to_rad(-40), deg_to_rad(60))
+
