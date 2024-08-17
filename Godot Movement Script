@@ -1,124 +1,205 @@
 extends CharacterBody3D
 
-var SPEED = 5.0
-var JUMP_VELOCITY = 4
-var CROUCH_SPEED = 1.5  # Speed when crouching
-var CROUCH_HEIGHT = 0.5  # Height when crouching
-var NORMAL_HEIGHT = 1.0  # Normal height
-var SLIDE_HEIGHT = 0.3  # Height when sliding
-var SLIDE_SPEED = 22.0  # Initial speed when sliding
-var SLIDE_FRICTION = 0.3  # Friction to slow down sliding
-var SLIDE_DURATION = 2.5  # Duration of the slide in seconds
-const AK_ROTATION_SPEED = 3.5
-const CAMERA_ROTATION_SPEED = 1.5
-var SPRINT_MULTIPLIER = 2  # Multiplier for sprinting speed
+const AK_ROTATION_SPEED: float = 3.0
+const CAMERA_ROTATION_SPEED: float = 1.5
+const FALL_DAMAGE_THRESHOLD: float = 10.0
+const NORMAL_HEIGHT: float = 1.0
 
-# Get the gravity from the project settings to be synced with RigidDynamicBody nodes.
-var gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity")
-@onready var neck := $Neck
-@onready var camera := $Neck/Camera3D
+@export_subgroup("SLIDING")
+@export var SLIDE_HEIGHT: float = 0.3
+@export var SLIDE_SPEED: float = 22.0
+@export var SLIDE_FRICTION: float = 0.3
+@export var SLIDE_DURATION: float = 1
+@export var SLIDE_TRANSITION_SPEED: float = 5.0  # Speed at which the slide transition occurs
 
-var is_crouching = false
-var is_sliding = false
-var slide_timer = 0.0  # Time elapsed since the slide started
-var slide_direction: Vector3 = Vector3.ZERO  # Direction during the slide
+@export_subgroup("CROUCHING")
+@export var CROUCH_SPEED: float = 1.5
+@export var CROUCH_HEIGHT: float = 0.5
+@export var CROUCH_TIME_ACUMMALTED: float = 0.0
+@export var CROUCH_TRANSITION_SPEED: float = 5.0  # Speed at which the crouch transition occurs
+
+@export_subgroup("MOVEMENT")
+@export var SPRINT_MULTIPLIER: float = 2.0
+@export var SPEED: float = 5.0
+@export var OLD_VELOCITY: float = 0.0
+
+@export_subgroup("JUMPING")
+@export var SPRINT_TIME_ACUMMALTED: float = 0.0
+@export var JUMP_VELOCITY: float = 4.0
+
+var gravity = ProjectSettings.get_setting("physics/3d/default_gravity")
+@onready var NECK := $Neck
+@onready var CAMERA := $Neck/Camera3D
+@onready var COLLISION_SHAPE = $CollisionShape3D
+@onready var HURT_OVERLAY = $HurtOverlay
+@onready var ANIM_PLAY = $Neck/Camera3D/AnimationPlayer
+@onready var HEALTH_BAR = $HealthBar
+@onready var HEALTH_BAR_BG = $HealthBarBG
+@onready var MANA_BAR = $ManaBar
+@onready var MANA_BAR_BG = $ManaBarBG
+@onready var HUNGER_BAR = $HungerBar
+@onready var HUNGER_BAR_BG = $HungerBarBG
+@onready var SPRINT_HUNGER_TIMER = $"../SprintHungerTimer"
+@onready var CROUCH_HUNGER_TIMER = $"../CrouchHungerTimer"
+
+var IS_CROUCHING = false
+var IS_SLIDING = false
+var SLIDE_TIMER = 0.0
+var SLIDE_DIRECTION: Vector3 = Vector3.ZERO
+var HURT_TWEEN: Tween
+var MANA_TWEEN: Tween
+var hunger_tween: Tween
+
+func _ready():
+	HEALTH_BAR.value = HEALTH_BAR_BG.value
+	MANA_BAR.value = MANA_BAR_BG.value
+	HUNGER_BAR.value = HUNGER_BAR_BG.value
+
+	SPRINT_HUNGER_TIMER.timeout.connect(_on_sprint_hunger_timeout)
+	CROUCH_HUNGER_TIMER.timeout.connect(_on_crouch_hunger_timeout)
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
 		Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
-	elif event.is_action_pressed("ui_cancel"):
-		Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+		
+	if event.is_action_pressed("ui_cancel"):
+		get_tree().quit()
+		
 	if Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
 		if event is InputEventMouseMotion:
-			neck.rotate_y(-event.relative.x * 0.01)
-			camera.rotate_x(-event.relative.y * 0.01)
-			camera.rotation.x = clamp(camera.rotation.x, deg_to_rad(-30), deg_to_rad(60))
-
+			NECK.rotate_y(-event.relative.x * 0.01)
+			CAMERA.rotate_x(-event.relative.y * 0.01)
+			CAMERA.rotation.x = clamp(CAMERA.rotation.x, deg_to_rad(-30), deg_to_rad(60))
+	
 func _physics_process(delta: float) -> void:
-	# Add the gravity.
+	# Add gravity
 	if not is_on_floor():
 		velocity.y -= gravity * delta
-	#Handle arrow keys
+		
+	# Handle arrow keys
 	if Input.is_action_pressed("ui_left"):
-		neck.rotate_y(AK_ROTATION_SPEED * delta)
+		NECK.rotate_y(AK_ROTATION_SPEED * delta)
 	
 	if Input.is_action_pressed("ui_right"):
-		neck.rotate_y(-AK_ROTATION_SPEED  * delta)
+		NECK.rotate_y(-AK_ROTATION_SPEED * delta)
 
 	if Input.is_action_pressed("ui_up"):
-		camera.rotate_x(AK_ROTATION_SPEED * delta)
+		CAMERA.rotate_x(AK_ROTATION_SPEED * delta)
 	
 	if Input.is_action_pressed("ui_down"):
-		camera.rotate_x(-AK_ROTATION_SPEED * delta)
-	# Handle Jump.
+		CAMERA.rotate_x(-AK_ROTATION_SPEED * delta)
+	
+	# Handle Jump
 	if Input.is_action_just_pressed("ui_accept") and is_on_floor():
 		velocity.y = JUMP_VELOCITY
-
-	# Check if the shift key is pressed for sprinting.
-	var is_sprinting = Input.is_action_pressed("Shift")
-
-	# Check if the crouch key is pressed.
-	is_crouching = Input.is_action_pressed("Crouch")
-
-	# Check if the slide key is pressed.
-	var should_slide = Input.is_action_pressed("Slide")
 	
-	# Calculate the input direction
-	var input_dir := Input.get_vector("Left", "Right", "Forward", "Backward")
-	var direction = (neck.transform.basis * Vector3(input_dir.x, 0, input_dir.y)).normalized()
+	# Sprinting logic
+	var IS_SPRINTING = Input.is_action_pressed("Shift")
+	if IS_SPRINTING:
+		SPRINT_TIME_ACUMMALTED += delta
+		if SPRINT_TIME_ACUMMALTED >= 15.0:
+			_on_sprint_hunger_timeout()
+			SPRINT_TIME_ACUMMALTED = 0.0
+	else:
+		SPRINT_TIME_ACUMMALTED = 0.0
 	
-	if should_slide and not is_sliding:
-		# Start sliding
-		is_sliding = true
-		slide_timer = SLIDE_DURATION
-		slide_direction = direction  # Store the direction when the slide starts
+	# Crouching logic
+	IS_CROUCHING = Input.is_action_pressed("Crouch") and is_on_floor()
 	
-	if is_sliding:
-		if Input.is_action_pressed("ui_accept"):  # Check for spacebar press
-			is_sliding = false
-			slide_timer = 0.0  # Reset slide timer to stop sliding
+	# Smooth transition for crouch height
+	if IS_CROUCHING:
+		scale.y = lerp(scale.y, CROUCH_HEIGHT, CROUCH_TRANSITION_SPEED * delta)
+		CROUCH_TIME_ACUMMALTED += delta
+		if CROUCH_TIME_ACUMMALTED >= 5.0:
+			_on_crouch_hunger_timeout()
+			CROUCH_TIME_ACUMMALTED = 0.0
+	else:
+		scale.y = lerp(scale.y, NORMAL_HEIGHT, CROUCH_TRANSITION_SPEED * delta)
+		CROUCH_TIME_ACUMMALTED = 0.0
+	
+	# Sliding logic
+	var SHOULD_SLIDE = Input.is_action_pressed("Slide") and is_on_floor()
+	var INPUT_DIRECTION := Input.get_vector("Left", "Right", "Forward", "Backward")
+	var DIRECTION = (NECK.transform.basis * Vector3(INPUT_DIRECTION.x, 0, INPUT_DIRECTION.y)).normalized()
+	
+	if SHOULD_SLIDE and not IS_SLIDING:
+		hunger_mechanic(.8)
+		IS_SLIDING = true
+		SLIDE_TIMER = SLIDE_DURATION
+		SLIDE_DIRECTION = DIRECTION
+	
+	if IS_SLIDING:
+		if Input.is_action_pressed("ui_accept"):
+			IS_SLIDING = false
+			SLIDE_TIMER = 0.0
 			
-		elif slide_timer > 0:
-			# Reduce the remaining time
-			slide_timer -= delta
-			# Calculate the sliding speed based on the remaining time
-			var time_fraction = max(slide_timer / SLIDE_DURATION, 0)  # Prevent negative values
-			var current_slide_speed = SLIDE_SPEED * time_fraction
-			# Adjust height for sliding
-			scale.y = SLIDE_HEIGHT
-			# Apply sliding speed and friction
-			velocity.x = slide_direction.x * current_slide_speed
-			velocity.z = slide_direction.z * current_slide_speed
+		elif SLIDE_TIMER > 0:
+			SLIDE_TIMER -= delta
+			var time_fraction = max(SLIDE_TIMER / SLIDE_DURATION, 0)
+			var CURRENT_SLIDE_SPEED = lerp(SLIDE_SPEED * 0.5, SLIDE_SPEED, time_fraction)
+			scale.y = lerp(SLIDE_HEIGHT, NORMAL_HEIGHT, time_fraction)
+			velocity.x = SLIDE_DIRECTION.x * CURRENT_SLIDE_SPEED
+			velocity.z = SLIDE_DIRECTION.z * CURRENT_SLIDE_SPEED
 			velocity.x *= (1 - SLIDE_FRICTION)
 			velocity.z *= (1 - SLIDE_FRICTION)
-			# Stop sliding when time runs out
-			if slide_timer <= 0:
-				is_sliding = false
+			if SLIDE_TIMER <= 0:
+				IS_SLIDING = false
 		else:
-			is_sliding = false
+			IS_SLIDING = false
 	else:
-		# Handle regular movement and crouching
-		if direction:
+		if DIRECTION:
 			var speed = SPEED
-			if is_sprinting:
+			if IS_SPRINTING:
 				speed *= SPRINT_MULTIPLIER
 
-			if is_crouching:
+			if IS_CROUCHING:
 				speed *= CROUCH_SPEED
-				# Adjust the height for crouching
-				scale.y = CROUCH_HEIGHT
 			else:
-				scale.y = NORMAL_HEIGHT
+				speed = SPEED
 
-			velocity.x = direction.x * speed
-			velocity.z = direction.z * speed
+			velocity.x = DIRECTION.x * speed
+			velocity.z = DIRECTION.z * speed
 		else:
 			velocity.x = move_toward(velocity.x, 0, SPEED)
 			velocity.z = move_toward(velocity.z, 0, SPEED)
 			
-	camera.rotation.x = clamp(camera.rotation.x, deg_to_rad(-40), deg_to_rad(60))
+	CAMERA.rotation.x = clamp(CAMERA.rotation.x, deg_to_rad(-40), deg_to_rad(60))
 	move_and_slide()
+	if OLD_VELOCITY < 0:
+		var DIFFERENCE = velocity.y - OLD_VELOCITY
+		if DIFFERENCE > FALL_DAMAGE_THRESHOLD:
+			hurt(DIFFERENCE - FALL_DAMAGE_THRESHOLD)		
+	OLD_VELOCITY = velocity.y
+	
+func _handle_CAMERA_rotation(delta: float) -> void:
+	CAMERA.rotation.x = clamp(CAMERA.rotation.x, deg_to_rad(-40), deg_to_rad(60))
 
-func _handle_camera_rotation(delta: float) -> void:
-	camera.rotation.x = clamp(camera.rotation.x, deg_to_rad(-40), deg_to_rad(60))
+func hurt(DAMAGE: float):
+	HEALTH_BAR.value -= DAMAGE
+	HURT_OVERLAY.modulate = Color.WHITE
+	if HURT_TWEEN:
+		HURT_TWEEN.kill()
+	HURT_TWEEN = create_tween()
+	HURT_TWEEN.parallel().tween_property(HURT_OVERLAY, "modulate", Color.TRANSPARENT, 3)
+	
+	HURT_TWEEN.set_ease(Tween.EASE_IN).set_trans(Tween.TRANS_CUBIC)
+	HURT_TWEEN.parallel().tween_property(HEALTH_BAR_BG, "value", HEALTH_BAR.value, 0.6)
 
+func _on_sprint_hunger_timeout():
+	hunger_mechanic(3) 
+
+func _on_crouch_hunger_timeout():
+	hunger_mechanic(1.5)
+
+func mana_mechanic(MANA_USAGE: float):
+	MANA_BAR.value -= MANA_USAGE
+	MANA_TWEEN = create_tween()
+	MANA_TWEEN.tween_property(MANA_BAR_BG, "value", MANA_BAR.value, 1)
+	MANA_TWEEN.set_ease(Tween.EASE_IN).set_trans(Tween.TRANS_CUBIC)
+	
+func hunger_mechanic(hunger_usage: float):
+	SPRINT_HUNGER_TIMER.start()
+	HUNGER_BAR.value -= hunger_usage
+	hunger_tween = create_tween()
+	hunger_tween.tween_property(HUNGER_BAR_BG, "value", HUNGER_BAR.value, 3)
+	hunger_tween.set_ease(Tween.EASE_IN).set_trans(Tween.TRANS_CUBIC)
