@@ -9,23 +9,26 @@ const NORMAL_HEIGHT: float = 1.0
 @export var SLIDE_HEIGHT: float = 0.3
 @export var SLIDE_SPEED: float = 22.0
 @export var SLIDE_FRICTION: float = 0.3
-@export var SLIDE_DURATION: float = 1
+@export var SLIDE_DURATION: float = 1.5
 @export var SLIDE_TRANSITION_SPEED: float = 5.0  # Speed at which the slide transition occurs
 
 @export_subgroup("CROUCHING")
-@export var CROUCH_SPEED: float = 1.5
+@export var CROUCH_SPEED: float = 3.5
 @export var CROUCH_HEIGHT: float = 0.5
 @export var CROUCH_TIME_ACUMMALTED: float = 0.0
 @export var CROUCH_TRANSITION_SPEED: float = 5.0  # Speed at which the crouch transition occurs
 
 @export_subgroup("MOVEMENT")
 @export var SPRINT_MULTIPLIER: float = 2.0
-@export var SPEED: float = 5.0
+@export var DEFAULT_SPEED: float = 5.5
 @export var OLD_VELOCITY: float = 0.0
 
 @export_subgroup("JUMPING")
 @export var SPRINT_TIME_ACUMMALTED: float = 0.0
 @export var JUMP_VELOCITY: float = 4.0
+
+@export_subgroup("EXTRA")
+@export var HEALING_COLOR = Color("#4dff6e")
 
 var gravity = ProjectSettings.get_setting("physics/3d/default_gravity")
 @onready var NECK := $Neck
@@ -41,6 +44,8 @@ var gravity = ProjectSettings.get_setting("physics/3d/default_gravity")
 @onready var HUNGER_BAR_BG = $HungerBarBG
 @onready var SPRINT_HUNGER_TIMER = $"../SprintHungerTimer"
 @onready var CROUCH_HUNGER_TIMER = $"../CrouchHungerTimer"
+@onready var HEALTH_REGEN_TIMER = $"../HealthRegenTimer"
+
 
 var IS_CROUCHING = false
 var IS_SLIDING = false
@@ -48,7 +53,7 @@ var SLIDE_TIMER = 0.0
 var SLIDE_DIRECTION: Vector3 = Vector3.ZERO
 var HURT_TWEEN: Tween
 var MANA_TWEEN: Tween
-var hunger_tween: Tween
+var HUNGER_TWEEN: Tween
 
 func _ready():
 	HEALTH_BAR.value = HEALTH_BAR_BG.value
@@ -57,6 +62,8 @@ func _ready():
 
 	SPRINT_HUNGER_TIMER.timeout.connect(_on_sprint_hunger_timeout)
 	CROUCH_HUNGER_TIMER.timeout.connect(_on_crouch_hunger_timeout)
+	HEALTH_REGEN_TIMER.timeout.connect(_on_health_regen_timeout)
+	HEALTH_REGEN_TIMER.start(15.0)  # Start the timer with a 15-second interval	
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
@@ -148,30 +155,32 @@ func _physics_process(delta: float) -> void:
 			IS_SLIDING = false
 	else:
 		if DIRECTION:
-			var speed = SPEED
-			if IS_SPRINTING:
-				speed *= SPRINT_MULTIPLIER
-
 			if IS_CROUCHING:
-				speed *= CROUCH_SPEED
+				DEFAULT_SPEED = CROUCH_SPEED
 			else:
-				speed = SPEED
+				DEFAULT_SPEED = 5.0
+			if IS_SPRINTING:
+				DEFAULT_SPEED *= SPRINT_MULTIPLIER
+			
+			else:
+				DEFAULT_SPEED = 5.0
 
-			velocity.x = DIRECTION.x * speed
-			velocity.z = DIRECTION.z * speed
+			velocity.x = DIRECTION.x * DEFAULT_SPEED
+			velocity.z = DIRECTION.z * DEFAULT_SPEED
 		else:
-			velocity.x = move_toward(velocity.x, 0, SPEED)
-			velocity.z = move_toward(velocity.z, 0, SPEED)
+			velocity.x = move_toward(velocity.x, 0, DEFAULT_SPEED)
+			velocity.z = move_toward(velocity.z, 0, DEFAULT_SPEED)
 			
 	CAMERA.rotation.x = clamp(CAMERA.rotation.x, deg_to_rad(-40), deg_to_rad(60))
 	move_and_slide()
+	
 	if OLD_VELOCITY < 0:
 		var DIFFERENCE = velocity.y - OLD_VELOCITY
 		if DIFFERENCE > FALL_DAMAGE_THRESHOLD:
 			hurt(DIFFERENCE - FALL_DAMAGE_THRESHOLD)		
 	OLD_VELOCITY = velocity.y
 	
-func _handle_CAMERA_rotation(delta: float) -> void:
+func _handle_cameras_rotation(_delta: float) -> void:
 	CAMERA.rotation.x = clamp(CAMERA.rotation.x, deg_to_rad(-40), deg_to_rad(60))
 
 func hurt(DAMAGE: float):
@@ -200,6 +209,31 @@ func mana_mechanic(MANA_USAGE: float):
 func hunger_mechanic(hunger_usage: float):
 	SPRINT_HUNGER_TIMER.start()
 	HUNGER_BAR.value -= hunger_usage
-	hunger_tween = create_tween()
-	hunger_tween.tween_property(HUNGER_BAR_BG, "value", HUNGER_BAR.value, 3)
-	hunger_tween.set_ease(Tween.EASE_IN).set_trans(Tween.TRANS_CUBIC)
+	HUNGER_TWEEN = create_tween()
+	HUNGER_TWEEN.tween_property(HUNGER_BAR_BG, "value", HUNGER_BAR.value, 3)
+	HUNGER_TWEEN.set_ease(Tween.EASE_IN).set_trans(Tween.TRANS_CUBIC)
+	
+# Health regeneration logic
+func _on_health_regen_timeout():
+	if HEALTH_BAR.value < HEALTH_BAR.max_value:
+		var previous_value = HEALTH_BAR.value
+		HEALTH_BAR.value += 10
+		HEALTH_BAR.value = clamp(HEALTH_BAR.value, 0, HEALTH_BAR.max_value)
+
+		# Create a tween for the healing effect
+		if HURT_TWEEN:
+			HURT_TWEEN.kill()  # Kill any existing tween to avoid conflict
+		HURT_TWEEN = create_tween()
+
+		# Tween the health bar background value to match the new health value
+		HURT_TWEEN.tween_property(HEALTH_BAR_BG, "value", HEALTH_BAR.value, 0.6)
+		HURT_TWEEN.set_ease(Tween.EASE_IN).set_trans(Tween.TRANS_CUBIC)
+
+		# Create a second tween for the hurt overlay effect
+		var overlay_tween = create_tween()
+		overlay_tween.tween_property(HURT_OVERLAY, "modulate", HEALING_COLOR, 0.3)
+		# Delay for the second part of the overlay effect
+		overlay_tween.tween_property(HURT_OVERLAY, "modulate", Color.TRANSPARENT, 0.3).set_delay(0.3)
+		
+		
+
