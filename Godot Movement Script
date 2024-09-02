@@ -7,10 +7,10 @@ const NORMAL_HEIGHT: float = 1.0
 
 @export_subgroup("SLIDING")
 @export var SLIDE_HEIGHT: float = 0.3
-@export var SLIDE_SPEED: float = 22.0
-@export var SLIDE_FRICTION: float = 0.3
-@export var SLIDE_DURATION: float = 1.5
-@export var SLIDE_TRANSITION_SPEED: float = 5.0  # Speed at which the slide transition occurs
+@export var SLIDE_SPEED: float = 30.0
+@export var SLIDE_FRICTION: float = 0.5
+@export var SLIDE_DURATION: float = 1.0
+@export var SLIDE_TRANSITION_SPEED: float = 7.5  # Speed at which the slide transition occurs
 
 @export_subgroup("CROUCHING")
 @export var CROUCH_SPEED: float = 3.5
@@ -19,15 +19,22 @@ const NORMAL_HEIGHT: float = 1.0
 @export var CROUCH_TRANSITION_SPEED: float = 5.0  # Speed at which the crouch transition occurs
 
 @export_subgroup("MOVEMENT")
-@export var SPRINT_MULTIPLIER: float = 2.0
 @export var DEFAULT_SPEED: float = 5.5
 @export var OLD_VELOCITY: float = 0.0
 
-@export_subgroup("JUMPING")
+@export_subgroup("SPRINTING")
+@export var SPRINT_MULTIPLIER: float = 2.5
 @export var SPRINT_TIME_ACUMMALTED: float = 0.0
+
+@export_subgroup("JUMPING")
 @export var JUMP_VELOCITY: float = 4.0
 
 @export_subgroup("EXTRA")
+@export var SLIDING_FOV: float = 90.0
+@export var CROUCH_FOV: float = 70.0
+@export var NORMAL_FOV: float = 80.0  # Normal Field of View
+@export var SPRINT_FOV: float = 105.0  # Sprinting Field of View
+@export var FOV_TRANSITION_SPEED: float = 5.0  # Speed at which the FOV transition occurs
 @export var HEALING_COLOR = Color("#4dff6e")
 
 var gravity = ProjectSettings.get_setting("physics/3d/default_gravity")
@@ -101,14 +108,17 @@ func _physics_process(delta: float) -> void:
 		velocity.y = JUMP_VELOCITY
 	
 	# Sprinting logic
-	var IS_SPRINTING = Input.is_action_pressed("Shift")
+	var IS_SPRINTING = Input.is_action_pressed("Shift") 
 	if IS_SPRINTING:
 		SPRINT_TIME_ACUMMALTED += delta
+		CAMERA.fov = lerp(CAMERA.fov, SPRINT_FOV, FOV_TRANSITION_SPEED * delta)
 		if SPRINT_TIME_ACUMMALTED >= 15.0:
 			_on_sprint_hunger_timeout()
 			SPRINT_TIME_ACUMMALTED = 0.0
+			CAMERA.fov = lerp(CAMERA.fov, SPRINT_FOV, FOV_TRANSITION_SPEED * delta)
 	else:
 		SPRINT_TIME_ACUMMALTED = 0.0
+		CAMERA.fov = lerp(CAMERA.fov, NORMAL_FOV, FOV_TRANSITION_SPEED * delta)
 	
 	# Crouching logic
 	IS_CROUCHING = Input.is_action_pressed("Crouch") and is_on_floor()
@@ -116,11 +126,13 @@ func _physics_process(delta: float) -> void:
 	# Smooth transition for crouch height
 	if IS_CROUCHING:
 		scale.y = lerp(scale.y, CROUCH_HEIGHT, CROUCH_TRANSITION_SPEED * delta)
+		CAMERA.fov = lerp(CAMERA.fov, CROUCH_FOV, FOV_TRANSITION_SPEED * delta)
 		CROUCH_TIME_ACUMMALTED += delta
 		if CROUCH_TIME_ACUMMALTED >= 5.0:
 			_on_crouch_hunger_timeout()
 			CROUCH_TIME_ACUMMALTED = 0.0
 	else:
+		CAMERA.fov = lerp(CAMERA.fov, NORMAL_FOV, FOV_TRANSITION_SPEED * delta)
 		scale.y = lerp(scale.y, NORMAL_HEIGHT, CROUCH_TRANSITION_SPEED * delta)
 		CROUCH_TIME_ACUMMALTED = 0.0
 	
@@ -130,12 +142,13 @@ func _physics_process(delta: float) -> void:
 	var DIRECTION = (NECK.transform.basis * Vector3(INPUT_DIRECTION.x, 0, INPUT_DIRECTION.y)).normalized()
 	
 	if SHOULD_SLIDE and not IS_SLIDING:
-		hunger_mechanic(.8)
+		hunger_mechanic(.2)
 		IS_SLIDING = true
 		SLIDE_TIMER = SLIDE_DURATION
 		SLIDE_DIRECTION = DIRECTION
 	
 	if IS_SLIDING:
+		CAMERA.fov = lerp(CAMERA.fov, SLIDING_FOV, FOV_TRANSITION_SPEED * delta)
 		if Input.is_action_pressed("ui_accept"):
 			IS_SLIDING = false
 			SLIDE_TIMER = 0.0
@@ -149,11 +162,8 @@ func _physics_process(delta: float) -> void:
 			velocity.z = SLIDE_DIRECTION.z * CURRENT_SLIDE_SPEED
 			velocity.x *= (1 - SLIDE_FRICTION)
 			velocity.z *= (1 - SLIDE_FRICTION)
-			if SLIDE_TIMER <= 0:
-				IS_SLIDING = false
-		else:
-			IS_SLIDING = false
 	else:
+		CAMERA.fov = lerp(CAMERA.fov, NORMAL_FOV, FOV_TRANSITION_SPEED * delta)
 		if DIRECTION:
 			if IS_CROUCHING:
 				DEFAULT_SPEED = CROUCH_SPEED
@@ -161,7 +171,6 @@ func _physics_process(delta: float) -> void:
 				DEFAULT_SPEED = 5.0
 			if IS_SPRINTING:
 				DEFAULT_SPEED *= SPRINT_MULTIPLIER
-			
 			else:
 				DEFAULT_SPEED = 5.0
 
@@ -207,7 +216,6 @@ func mana_mechanic(MANA_USAGE: float):
 	MANA_TWEEN.set_ease(Tween.EASE_IN).set_trans(Tween.TRANS_CUBIC)
 	
 func hunger_mechanic(hunger_usage: float):
-	SPRINT_HUNGER_TIMER.start()
 	HUNGER_BAR.value -= hunger_usage
 	HUNGER_TWEEN = create_tween()
 	HUNGER_TWEEN.tween_property(HUNGER_BAR_BG, "value", HUNGER_BAR.value, 3)
@@ -229,11 +237,8 @@ func _on_health_regen_timeout():
 		HURT_TWEEN.tween_property(HEALTH_BAR_BG, "value", HEALTH_BAR.value, 0.6)
 		HURT_TWEEN.set_ease(Tween.EASE_IN).set_trans(Tween.TRANS_CUBIC)
 
-		# Create a second tween for the hurt overlay effect
-		var overlay_tween = create_tween()
-		overlay_tween.tween_property(HURT_OVERLAY, "modulate", HEALING_COLOR, 0.3)
-		# Delay for the second part of the overlay effect
-		overlay_tween.tween_property(HURT_OVERLAY, "modulate", Color.TRANSPARENT, 0.3).set_delay(0.3)
-		
-		
-
+		# Create a second tween to turn the health bar green during healing
+		var bar_tween = create_tween()
+		bar_tween.tween_property(HEALTH_BAR, "modulate", HEALING_COLOR, 0.3)
+		# Delay for the second part of the bar color reset effect
+		bar_tween.tween_property(HEALTH_BAR, "modulate", Color.WHITE, 0.3).set_delay(0.3)
