@@ -35,7 +35,7 @@ const NORMAL_HEIGHT: float = 1.0
 @export var NORMAL_FOV: float = 80.0  # Normal Field of View
 @export var SPRINT_FOV: float = 105.0  # Sprinting Field of View
 @export var FOV_TRANSITION_SPEED: float = 5.0  # Speed at which the FOV transition occurs
-@export var HEALING_COLOR = Color("#4dff6e")
+@export var HEALING_COLOR = Color("green")
 
 var gravity = ProjectSettings.get_setting("physics/3d/default_gravity")
 @onready var NECK := $Neck
@@ -112,7 +112,7 @@ func _physics_process(delta: float) -> void:
 	if IS_SPRINTING:
 		SPRINT_TIME_ACUMMALTED += delta
 		CAMERA.fov = lerp(CAMERA.fov, SPRINT_FOV, FOV_TRANSITION_SPEED * delta)
-		if SPRINT_TIME_ACUMMALTED >= 15.0:
+		if SPRINT_TIME_ACUMMALTED >= 35.0:
 			_on_sprint_hunger_timeout()
 			SPRINT_TIME_ACUMMALTED = 0.0
 			CAMERA.fov = lerp(CAMERA.fov, SPRINT_FOV, FOV_TRANSITION_SPEED * delta)
@@ -128,7 +128,7 @@ func _physics_process(delta: float) -> void:
 		scale.y = lerp(scale.y, CROUCH_HEIGHT, CROUCH_TRANSITION_SPEED * delta)
 		CAMERA.fov = lerp(CAMERA.fov, CROUCH_FOV, FOV_TRANSITION_SPEED * delta)
 		CROUCH_TIME_ACUMMALTED += delta
-		if CROUCH_TIME_ACUMMALTED >= 5.0:
+		if CROUCH_TIME_ACUMMALTED >= 35.0:
 			_on_crouch_hunger_timeout()
 			CROUCH_TIME_ACUMMALTED = 0.0
 	else:
@@ -206,7 +206,7 @@ func hurt(DAMAGE: float):
 	HURT_TWEEN.parallel().tween_property(HEALTH_BAR_BG, "value", HEALTH_BAR.value, 0.6)
 
 func _on_sprint_hunger_timeout():
-	hunger_mechanic(3) 
+	hunger_mechanic(2.5) 
 
 func _on_crouch_hunger_timeout():
 	hunger_mechanic(1.5)
