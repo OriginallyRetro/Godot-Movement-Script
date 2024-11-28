@@ -1,78 +1,89 @@
 extends CharacterBody3D
 
 const AK_ROTATION_SPEED: float = 3.0
-const CAMERA_ROTATION_SPEED: float = 1.5
+const camera_ROTATION_SPEED: float = 1.5
 const FALL_DAMAGE_THRESHOLD: float = 10.0
 const NORMAL_HEIGHT: float = 1.0
+const MAX_JUMPS = 2
+
+@export_subgroup("HEABOB MECHANICS")
+@export var headbob_move_amount = 0.06
+@export var headbob_frequency = 2.0
+@export var headbob_time := 0.0
+
+@onready var top_of_head: RayCast3D = $Neck/Raycasts/TopOfHead
+@onready var face_level: RayCast3D = $Neck/Raycasts/FaceLevel
+@onready var wall_run_right: RayCast3D = $Neck/Raycasts/WallRunRight
+@onready var wall_run_left: RayCast3D = $Neck/Raycasts/WallRunLeft
 
 @export_subgroup("SLIDING")
 @export var SLIDE_HEIGHT: float = 0.3
-@export var SLIDE_SPEED: float = 30.0
-@export var SLIDE_FRICTION: float = 0.25
-@export var SLIDE_DURATION: float = 1.0
-@export var SLIDE_TRANSITION_SPEED: float = 7.5  # Speed at which the slide transition occurs
+@export var slide_speed: float = 30.0
+@export var slide_friction: float = 0.25
+@export var slide_duration: float = 1.0
 
 @export_subgroup("CROUCHING")
-@export var CROUCH_SPEED: float = 3.5
-@export var CROUCH_HEIGHT: float = 0.5
-@export var CROUCH_TIME_ACUMMALTED: float = 0.0
-@export var CROUCH_TRANSITION_SPEED: float = 5.0  # Speed at which the crouch transition occurs
+@export var crouch_speed: float = 3.5
+@export var crouch_height: float = 0.5
+@export var crouch_time_accumalted: float = 0.0
+@export var crouch_transition_speed: float = 5.0
 
 @export_subgroup("MOVEMENT")
-@export var DEFAULT_SPEED: float = 5.5
-@export var OLD_VELOCITY: float = 0.0
+@export var default_speed: float = 5.5
+@export var old_velocity: float = 0.0
 
 @export_subgroup("SPRINTING")
-@export var SPRINT_MULTIPLIER: float = 2.5
-@export var SPRINT_TIME_ACUMMALTED: float = 0.0
+@export var sprint_multipler: float = 2.0
+@export var sprint_time_accumalted: float = 0.0
 
 @export_subgroup("JUMPING")
-@export var JUMP_VELOCITY: float = 4.0
+@export var jump_velocity: float = 4.0
+@export var jump_counter = 0
+@export_subgroup("AIR_MECHANICS")
+@export var air_cap := 1
+@export var air_acceleration := 850.0
+@export var air_move_speed := 550.0
 
 @export_subgroup("EXTRA")
-@export var SLIDING_FOV: float = 90.0
-@export var CROUCH_FOV: float = 70.0
-@export var NORMAL_FOV: float = 80.0  # Normal Field of View
-@export var SPRINT_FOV: float = 105.0  # Sprinting Field of View
-@export var FOV_TRANSITION_SPEED: float = 5.0  # Speed at which the FOV transition occurs
-@export var HEALING_COLOR = Color("green")
+@export var sliding_fov: float = 90.0
+@export var crouch_fov: float = 70.0
+@export var normal_fov: float = 80.0  # Normal Field of View
+@export var sprint_fov: float = 105.0  # Sprinting Field of View
+@export var fov_transition_speed: float = 5.0  # Speed at which the FOV transition occurs
+
+@onready var neck := $Neck
+@onready var camera := $Neck/Camera3D
+@onready var collision_shape = $CollisionShape3D
+@onready var sfx_jump_sound_effect: AudioStreamPlayer = $SFX_JumpSoundEffect
+
+@export_subgroup("WALLRUNNING MECHANICS")
+@export var can_wall_run_timer = 6
+
+@export_subgroup("DASHING")
+@export var dash_speed = 20.0  # Speed of the dash
+@export var dash_duration = 0.2  # Duration of the dash in seconds
+var is_dashing = false
+var dash_timer = 0.0  # Timer to track dash duration
+var dash_direction = Vector3.ZERO  # Direction of the dash
 
 var gravity = ProjectSettings.get_setting("physics/3d/default_gravity")
-@onready var NECK := $Neck
-@onready var CAMERA := $Neck/Camera3D
-@onready var COLLISION_SHAPE = $CollisionShape3D
-@onready var HURT_OVERLAY = $HurtOverlay
-@onready var ANIM_PLAY = $Neck/Camera3D/AnimationPlayer
-@onready var HEALTH_BAR = $HealthBar
-@onready var HEALTH_BAR_BG = $HealthBarBG
-@onready var MANA_BAR = $ManaBar
-@onready var MANA_BAR_BG = $ManaBarBG
-@onready var HUNGER_BAR = $HungerBar
-@onready var HUNGER_BAR_BG = $HungerBarBG
-@onready var SPRINT_HUNGER_TIMER = $"../SprintHungerTimer"
-@onready var CROUCH_HUNGER_TIMER = $"../CrouchHungerTimer"
-@onready var HEALTH_REGEN_TIMER = $"../HealthRegenTimer"
+var can_wall_run = true
+var is_crouching = false
+var is_sliding = false
+var slide_timer = 0.0
+var slide_direction: Vector3 = Vector3.ZERO
+var wish_dir := Vector3.ZERO
 
-
-var IS_CROUCHING = false
-var IS_SLIDING = false
-var SLIDE_TIMER = 0.0
-var SLIDE_DIRECTION: Vector3 = Vector3.ZERO
-var HURT_TWEEN: Tween
-var MANA_TWEEN: Tween
-var HUNGER_TWEEN: Tween
 
 func _ready():
-	HEALTH_BAR.value = HEALTH_BAR_BG.value
-	MANA_BAR.value = MANA_BAR_BG.value
-	HUNGER_BAR.value = HUNGER_BAR_BG.value
-
-	SPRINT_HUNGER_TIMER.timeout.connect(_on_sprint_hunger_timeout)
-	CROUCH_HUNGER_TIMER.timeout.connect(_on_crouch_hunger_timeout)
-	HEALTH_REGEN_TIMER.timeout.connect(_on_health_regen_timeout)
-	HEALTH_REGEN_TIMER.start(15.0)  # Start the timer with a 15-second interval	
+	pass
 
 func _unhandled_input(event: InputEvent) -> void:
+	if Input.is_action_pressed("Tab"):
+		$PauseMenu.pause()
+		if event is InputEventMouseButton:
+			Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+	
 	if event is InputEventMouseButton:
 		Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 		
@@ -81,166 +92,249 @@ func _unhandled_input(event: InputEvent) -> void:
 		
 	if Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
 		if event is InputEventMouseMotion:
-			NECK.rotate_y(-event.relative.x * 0.01)
-			CAMERA.rotate_x(-event.relative.y * 0.01)
-			CAMERA.rotation.x = clamp(CAMERA.rotation.x, deg_to_rad(-30), deg_to_rad(60))
+			neck.rotate_y(-event.relative.x * 0.01)
+			camera.rotate_x(-event.relative.y * 0.01)
+			camera.rotation.x = clamp(camera.rotation.x, deg_to_rad(-30), deg_to_rad(60))
 	
 func _physics_process(delta: float) -> void:
-	# Add gravity
+	check_mantle()
+	check_if_can_wallrun(delta)
+	_headbob_effect(delta)
+	handle_air_movement(delta)	
+	handle_ground_movement(delta)
+	move_and_slide()
+	handle_arrowkeys(delta)
+	handle_jumping()
+	handle_crouching(delta)
+	handle_sliding(delta)
+	handle_dashing(delta)
 	if not is_on_floor():
 		velocity.y -= gravity * delta
-		
-	# Handle arrow keys
-	if Input.is_action_pressed("ui_left"):
-		NECK.rotate_y(AK_ROTATION_SPEED * delta)
 	
-	if Input.is_action_pressed("ui_right"):
-		NECK.rotate_y(-AK_ROTATION_SPEED * delta)
+	camera.rotation.x = clamp(camera.rotation.x, deg_to_rad(-40), deg_to_rad(60))
 
-	if Input.is_action_pressed("ui_up"):
-		CAMERA.rotate_x(AK_ROTATION_SPEED * delta)
-	
-	if Input.is_action_pressed("ui_down"):
-		CAMERA.rotate_x(-AK_ROTATION_SPEED * delta)
-	
-	# Handle Jump
-	if Input.is_action_just_pressed("ui_accept") and is_on_floor():
-		velocity.y = JUMP_VELOCITY
-	
-	# Sprinting logic
-	var IS_SPRINTING = Input.is_action_pressed("Shift") 
-	if IS_SPRINTING:
-		SPRINT_TIME_ACUMMALTED += delta
-		CAMERA.fov = lerp(CAMERA.fov, SPRINT_FOV, FOV_TRANSITION_SPEED * delta)
-		if SPRINT_TIME_ACUMMALTED >= 35.0:
-			_on_sprint_hunger_timeout()
-			SPRINT_TIME_ACUMMALTED = 0.0
-			CAMERA.fov = lerp(CAMERA.fov, SPRINT_FOV, FOV_TRANSITION_SPEED * delta)
-	else:
-		SPRINT_TIME_ACUMMALTED = 0.0
-		CAMERA.fov = lerp(CAMERA.fov, NORMAL_FOV, FOV_TRANSITION_SPEED * delta)
-	
-	# Crouching logic
-	IS_CROUCHING = Input.is_action_pressed("Crouch") and is_on_floor()
+func handle_crouching(delta):
+	is_crouching = Input.is_action_pressed("Crouch") and is_on_floor()
 	
 	# Smooth transition for crouch height
-	if IS_CROUCHING:
-		scale.y = lerp(scale.y, CROUCH_HEIGHT, CROUCH_TRANSITION_SPEED * delta)
-		CAMERA.fov = lerp(CAMERA.fov, CROUCH_FOV, FOV_TRANSITION_SPEED * delta)
-		CROUCH_TIME_ACUMMALTED += delta
-		if CROUCH_TIME_ACUMMALTED >= 35.0:
-			_on_crouch_hunger_timeout()
-			CROUCH_TIME_ACUMMALTED = 0.0
+	if is_crouching:
+		scale.y = lerp(scale.y, crouch_height, crouch_transition_speed * delta)
+		camera.fov = lerp(camera.fov, crouch_fov, fov_transition_speed * delta)
+		crouch_time_accumalted += delta
+		if crouch_time_accumalted >= 35.0:
+			crouch_time_accumalted = 0.0
 	else:
-		CAMERA.fov = lerp(CAMERA.fov, NORMAL_FOV, FOV_TRANSITION_SPEED * delta)
-		scale.y = lerp(scale.y, NORMAL_HEIGHT, CROUCH_TRANSITION_SPEED * delta)
-		CROUCH_TIME_ACUMMALTED = 0.0
-	
-	# Sliding logic
+		camera.fov = lerp(camera.fov, normal_fov, fov_transition_speed * delta)
+		scale.y = lerp(scale.y, NORMAL_HEIGHT, crouch_transition_speed * delta)
+		crouch_time_accumalted = 0.0
+
+
+func handle_sliding(delta):
 	var SHOULD_SLIDE = Input.is_action_pressed("Slide") and is_on_floor()
 	var INPUT_DIRECTION := Input.get_vector("Left", "Right", "Forward", "Backward")
-	var DIRECTION = (NECK.transform.basis * Vector3(INPUT_DIRECTION.x, 0, INPUT_DIRECTION.y)).normalized()
+	var DIRECTION = (neck.transform.basis * Vector3(INPUT_DIRECTION.x, 0, INPUT_DIRECTION.y)).normalized()
+	var IS_SPRINTING = Input.is_action_pressed("Shift")
+	
+	if SHOULD_SLIDE and not is_sliding:
+		is_sliding = true
+		slide_timer = slide_duration
+		slide_direction = neck.transform.basis.z.normalized() * -1
 
-	if SHOULD_SLIDE and not IS_SLIDING:
-		hunger_mechanic(.8)
-		IS_SLIDING = true
-		SLIDE_TIMER = SLIDE_DURATION
-		SLIDE_DIRECTION = NECK.transform.basis.z.normalized() * -1
-
-	if IS_SLIDING:
+	if is_sliding:
 		if Input.is_action_pressed("ui_accept"):
-			IS_SLIDING = false
-			SLIDE_TIMER = 0.0
+			is_sliding = false
+			slide_timer = 0.0
 
-		elif SLIDE_TIMER > 0:
-			SLIDE_TIMER -= delta
-			var time_fraction = max(SLIDE_TIMER / SLIDE_DURATION, 0)
-			var CURRENT_SLIDE_SPEED = lerp(SLIDE_SPEED * 0.5, SLIDE_SPEED, time_fraction)
+		elif slide_timer > 0:
+			slide_timer -= delta
+			var time_fraction = max(slide_timer / slide_duration, 0)
+			var CURRENT_slide_speed = lerp(slide_speed * 0.5, slide_speed, time_fraction)
 			scale.y = lerp(SLIDE_HEIGHT, NORMAL_HEIGHT, time_fraction)
-			velocity.x = SLIDE_DIRECTION.x * CURRENT_SLIDE_SPEED
-			velocity.z = SLIDE_DIRECTION.z * CURRENT_SLIDE_SPEED
-			velocity.x *= (1 - SLIDE_FRICTION)
-			velocity.z *= (1 - SLIDE_FRICTION)
-			if SLIDE_TIMER <= 0:
-				IS_SLIDING = false
+			velocity.x = slide_direction.x * CURRENT_slide_speed
+			velocity.z = slide_direction.z * CURRENT_slide_speed
+			velocity.x *= (1 - slide_friction)
+			velocity.z *= (1 - slide_friction)
+			if slide_timer <= 0:
+				is_sliding = false
 		else:
-			IS_SLIDING = false
+			is_sliding = false
 	else:
 		if DIRECTION:
-			if IS_CROUCHING:
-				DEFAULT_SPEED = CROUCH_SPEED
+			if is_crouching:
+				default_speed = crouch_speed
 			else:
-				DEFAULT_SPEED = 5.0
+				default_speed = 5.0
 			if IS_SPRINTING:
-				DEFAULT_SPEED *= SPRINT_MULTIPLIER
+				default_speed *= sprint_multipler
 			else:
-				DEFAULT_SPEED = 5.0
+				default_speed = 5.0
 
-			velocity.x = DIRECTION.x * DEFAULT_SPEED
-			velocity.z = DIRECTION.z * DEFAULT_SPEED
+			velocity.x = DIRECTION.x * default_speed
+			velocity.z = DIRECTION.z * default_speed
 		else:
-			velocity.x = move_toward(velocity.x, 0, DEFAULT_SPEED)
-			velocity.z = move_toward(velocity.z, 0, DEFAULT_SPEED)
-			
-	CAMERA.rotation.x = clamp(CAMERA.rotation.x, deg_to_rad(-40), deg_to_rad(60))
-	move_and_slide()
+			velocity.x = move_toward(velocity.x, 0, default_speed)
+			velocity.z = move_toward(velocity.z, 0, default_speed)
+
+func handle_sprinting(delta):
+	var IS_SPRINTING = Input.is_action_pressed("Shift")
+	if IS_SPRINTING:
+		sprint_time_accumalted += delta
+		camera.fov = lerp(camera.fov, sprint_fov, fov_transition_speed * delta)
+		if sprint_time_accumalted >= 35.0:
+			sprint_time_accumalted = 0.0
+			camera.fov = lerp(camera.fov, sprint_fov, fov_transition_speed * delta)
+	else:
+		sprint_time_accumalted = 0.0
+		camera.fov = lerp(camera.fov, normal_fov, fov_transition_speed * delta)
+
+
+
+func handle_jumping():
+
+	if Input.is_action_just_pressed("Jump") and jump_counter < MAX_JUMPS:
+		jump_counter += 1
+		velocity.y = jump_velocity
+		sfx_jump_sound_effect.play()
+		print(jump_counter)
+	else:
+		if is_on_floor():
+			jump_counter = 0
+
+func handle_arrowkeys(delta):
+	if Input.is_action_pressed("ui_left"):
+		neck.rotate_y(AK_ROTATION_SPEED * delta)
 	
-	if OLD_VELOCITY < 0:
-		var DIFFERENCE = velocity.y - OLD_VELOCITY
-		if DIFFERENCE > FALL_DAMAGE_THRESHOLD:
-			hurt(DIFFERENCE - FALL_DAMAGE_THRESHOLD)		
-	OLD_VELOCITY = velocity.y
+	if Input.is_action_pressed("ui_right"):
+		neck.rotate_y(-AK_ROTATION_SPEED * delta)
+
+	if Input.is_action_pressed("ui_up"):
+		camera.rotate_x(AK_ROTATION_SPEED * delta)
 	
+	if Input.is_action_pressed("ui_down"):
+		camera.rotate_x(-AK_ROTATION_SPEED * delta)
+
 func _handle_cameras_rotation(_delta: float) -> void:
-	CAMERA.rotation.x = clamp(CAMERA.rotation.x, deg_to_rad(-40), deg_to_rad(60))
+	camera.rotation.x = clamp(camera.rotation.x, deg_to_rad(-40), deg_to_rad(60))
 
-func hurt(DAMAGE: float):
-	HEALTH_BAR.value -= DAMAGE
-	HURT_OVERLAY.modulate = Color.WHITE
-	if HURT_TWEEN:
-		HURT_TWEEN.kill()
-	HURT_TWEEN = create_tween()
-	HURT_TWEEN.parallel().tween_property(HURT_OVERLAY, "modulate", Color.TRANSPARENT, 3)
+func check_mantle():
+	var has_ledge = (face_level.is_colliding() and not top_of_head.is_colliding())
+	if has_ledge:
+		gravity = 0
+		velocity.y = 0
+		
+		if has_ledge and Input.is_action_just_pressed("ui_accept"):
+			# Calculate the correct forward direction
+			var forward_vector = -neck.global_transform.basis.z.normalized()
+			# Calculate the target position
+			var target_position = position + Vector3(0, 1.3, 0) + (forward_vector * 0.8)
+			
+			# Create a Tween node
+			var climb_tween = create_tween()
+			climb_tween.tween_property(self, "position", target_position, 0.45)
+	else:
+		gravity = ProjectSettings.get_setting("physics/3d/default_gravity")
+
+func wall_run_timer():
 	
-	HURT_TWEEN.set_ease(Tween.EASE_IN).set_trans(Tween.TRANS_CUBIC)
-	HURT_TWEEN.parallel().tween_property(HEALTH_BAR_BG, "value", HEALTH_BAR.value, 0.6)
+	if Input.is_action_pressed("Shift") and velocity.z:
+		can_wall_run_timer -= 1
+		
+	if can_wall_run_timer <= 0:
+		
+		can_wall_run = true
+		
+	else:
+		
+		can_wall_run = false
 
-func _on_sprint_hunger_timeout():
-	hunger_mechanic(2.5) 
+func check_if_can_wallrun(delta: float):
+	if not can_wall_run:
+		# Reset gravity and camera properties when not wall running
+		gravity = ProjectSettings.get_setting("physics/3d/default_gravity")
+		camera.fov = lerp(camera.fov, normal_fov, fov_transition_speed * delta)
 
-func _on_crouch_hunger_timeout():
-	hunger_mechanic(1.5)
+	if can_wall_run:
+		if wall_run_right.is_colliding() and not is_on_floor():
+			gravity = ProjectSettings.get_setting("physics/3d/default_gravity") * 0.5
+			velocity.y = max(velocity.y, -0.5)  # Prevent upward flying
+			velocity.x *= 1.3
+			velocity.z *= 1.3
+			camera.fov = lerp(camera.fov, 110.0, fov_transition_speed * delta)
 
-func mana_mechanic(MANA_USAGE: float):
-	MANA_BAR.value -= MANA_USAGE
-	MANA_TWEEN = create_tween()
-	MANA_TWEEN.tween_property(MANA_BAR_BG, "value", MANA_BAR.value, 1)
-	MANA_TWEEN.set_ease(Tween.EASE_IN).set_trans(Tween.TRANS_CUBIC)
+		elif wall_run_left.is_colliding() and not is_on_floor():
+			gravity = ProjectSettings.get_setting("physics/3d/default_gravity") * 0.5
+			velocity.y = max(velocity.y, -0.5)  # Prevent upward flying
+			velocity.x *= 1.3
+			velocity.z *= 1.3
+
+	else:
+		# Reset gravity and camera properties when not wall running
+		gravity = ProjectSettings.get_setting("physics/3d/default_gravity")
+		camera.fov = lerp(camera.fov, normal_fov, fov_transition_speed * delta)
+
+func _headbob_effect(delta):
+	headbob_time += delta * self.velocity.length()
+	camera.transform.origin = Vector3(
+		cos(headbob_time * headbob_frequency * 0.5) * headbob_move_amount,
+		 sin(headbob_time * headbob_frequency) * headbob_move_amount,
+		 0)
+
+func handle_air_movement(delta):
+	#handling air speed
+	var current_speed_in_wish_dir = self.velocity.dot(wish_dir)
+	var capped_speed = min((air_move_speed * wish_dir).length(), air_cap)
+	var add_speed_till_cap = capped_speed - current_speed_in_wish_dir
 	
-func hunger_mechanic(hunger_usage: float):
-	HUNGER_BAR.value -= hunger_usage
-	HUNGER_TWEEN = create_tween()
-	HUNGER_TWEEN.tween_property(HUNGER_BAR_BG, "value", HUNGER_BAR.value, 3)
-	HUNGER_TWEEN.set_ease(Tween.EASE_IN).set_trans(Tween.TRANS_CUBIC)
-	
-# Health regeneration logic
-func _on_health_regen_timeout():
-	if HEALTH_BAR.value < HEALTH_BAR.max_value:
-		var previous_value = HEALTH_BAR.value
-		HEALTH_BAR.value += 10
-		HEALTH_BAR.value = clamp(HEALTH_BAR.value, 0, HEALTH_BAR.max_value)
+	if add_speed_till_cap > 0:
+		var acceleration_speed = air_acceleration * air_move_speed * delta
+		acceleration_speed = min(acceleration_speed, add_speed_till_cap)
+		self.velocity += acceleration_speed * wish_dir
+		#==================
 
-		# Create a tween for the healing effect
-		if HURT_TWEEN:
-			HURT_TWEEN.kill()  # Kill any existing tween to avoid conflict
-		HURT_TWEEN = create_tween()
+func handle_ground_movement(delta):
+		var ground_acceleration := 25.0
+		var ground_deceleration := 0.05
+		var ground_friction := 0.02
+		var current_speed_in_wish_dir = self.velocity.dot(wish_dir)
+		
+		var add_speed_till_cap = sprint_multipler - current_speed_in_wish_dir
+		if add_speed_till_cap > 0:
+			var acceleration_speed = ground_acceleration * delta * sprint_multipler
+			acceleration_speed = min(acceleration_speed, add_speed_till_cap)
+			self.velocity += acceleration_speed * wish_dir
+			
+		var control = max(self.velocity.length(), ground_deceleration)
+		var drop = control * ground_friction * delta
+		var new_speed = max(self.velocity.length() - drop, 0.0)
+		if self.velocity.length() > 0:
+			new_speed /= self.velocity.length()
+		self.velocity *= new_speed
 
-		# Tween the health bar background value to match the new health value
-		HURT_TWEEN.tween_property(HEALTH_BAR_BG, "value", HEALTH_BAR.value, 0.6)
-		HURT_TWEEN.set_ease(Tween.EASE_IN).set_trans(Tween.TRANS_CUBIC)
 
-		# Create a second tween to turn the health bar green during healing
-		var bar_tween = create_tween()
-		bar_tween.tween_property(HEALTH_BAR, "modulate", HEALING_COLOR, 0.3)
-		# Delay for the second part of the bar color reset effect
-		bar_tween.tween_property(HEALTH_BAR, "modulate", Color.WHITE, 0.3).set_delay(0.3)
+
+
+func handle_dashing(delta):
+	if Input.is_action_just_pressed("Dash") and not is_dashing:
+		start_dash()
+
+	if is_dashing:
+		apply_dash(delta)
+
+func start_dash():
+	# Dash in the direction the player is facing
+	dash_direction = neck.global_transform.basis.z.normalized() * -1  # Forward direction
+	velocity = dash_direction * dash_speed
+	is_dashing = true
+	dash_timer = dash_duration
+
+func apply_dash(delta):
+	if dash_timer > 0:
+		# Continue dashing while in the air or on the ground
+		velocity = dash_direction * dash_speed
+		dash_timer -= delta
+	else:
+		# End dash
+		is_dashing = false
+		# You may want to blend back to normal movement, depending on your needs
+		velocity.y = velocity.y  # Maintain current vertical velocity (for gravity control)
+
