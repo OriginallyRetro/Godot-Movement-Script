@@ -5,7 +5,6 @@ const camera_ROTATION_SPEED: float = 1.5
 const FALL_DAMAGE_THRESHOLD: float = 10.0
 const NORMAL_HEIGHT: float = 1.0
 const MAX_JUMPS = 2
-
 @export_subgroup("HEABOB MECHANICS")
 @export var headbob_move_amount = 0.06
 @export var headbob_frequency = 2.0
@@ -52,19 +51,15 @@ const MAX_JUMPS = 2
 @export var fov_transition_speed: float = 5.0  # Speed at which the FOV transition occurs
 
 @onready var neck := $Neck
-@onready var camera := $Neck/Camera3D
-@onready var collision_shape = $CollisionShape3D
+@onready var camera: Camera3D = $Neck/Camera3D
+@onready var collision_shape := $CollisionShape3D
 @onready var sfx_jump_sound_effect: AudioStreamPlayer = $SFX_JumpSoundEffect
 
 @export_subgroup("WALLRUNNING MECHANICS")
-@export var can_wall_run_timer = 6
+@export var can_wall_run_timer := 6
+@export var wall_run_jump_velocity := 6.0
+@export var wall_run_fov := 125.0
 
-@export_subgroup("DASHING")
-@export var dash_speed = 20.0  # Speed of the dash
-@export var dash_duration = 0.2  # Duration of the dash in seconds
-var is_dashing = false
-var dash_timer = 0.0  # Timer to track dash duration
-var dash_direction = Vector3.ZERO  # Direction of the dash
 
 var gravity = ProjectSettings.get_setting("physics/3d/default_gravity")
 var can_wall_run = true
@@ -74,9 +69,17 @@ var slide_timer = 0.0
 var slide_direction: Vector3 = Vector3.ZERO
 var wish_dir := Vector3.ZERO
 
+var jumped_from_left_wall = true
+var jumped_from_right_wall = true
+
+var r_tilt = true
+var l_tilt = true
+
 
 func _ready():
-	pass
+	#Unsure for the reason why but when you spawn in your camera rotation is off so that fixes it!
+	camera.rotation = Vector3(0, 0, 0)
+	Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 
 func _unhandled_input(event: InputEvent) -> void:
 	if Input.is_action_pressed("Tab"):
@@ -107,11 +110,10 @@ func _physics_process(delta: float) -> void:
 	handle_jumping()
 	handle_crouching(delta)
 	handle_sliding(delta)
-	handle_dashing(delta)
+	handle_cameras_rotation()
 	if not is_on_floor():
 		velocity.y -= gravity * delta
 	
-	camera.rotation.x = clamp(camera.rotation.x, deg_to_rad(-40), deg_to_rad(60))
 
 func handle_crouching(delta):
 	is_crouching = Input.is_action_pressed("Crouch") and is_on_floor()
@@ -128,7 +130,6 @@ func handle_crouching(delta):
 		scale.y = lerp(scale.y, NORMAL_HEIGHT, crouch_transition_speed * delta)
 		crouch_time_accumalted = 0.0
 
-
 func handle_sliding(delta):
 	var SHOULD_SLIDE = Input.is_action_pressed("Slide") and is_on_floor()
 	var INPUT_DIRECTION := Input.get_vector("Left", "Right", "Forward", "Backward")
@@ -141,6 +142,9 @@ func handle_sliding(delta):
 		slide_direction = neck.transform.basis.z.normalized() * -1
 
 	if is_sliding:
+		headbob_move_amount = 0.0
+		headbob_frequency = 0.0
+		headbob_time = 0.0
 		if Input.is_action_pressed("ui_accept"):
 			is_sliding = false
 			slide_timer = 0.0
@@ -171,9 +175,13 @@ func handle_sliding(delta):
 
 			velocity.x = DIRECTION.x * default_speed
 			velocity.z = DIRECTION.z * default_speed
+			
 		else:
 			velocity.x = move_toward(velocity.x, 0, default_speed)
 			velocity.z = move_toward(velocity.z, 0, default_speed)
+			headbob_move_amount = 0.06
+			headbob_frequency = 2.0
+			headbob_time = 0.0
 
 func handle_sprinting(delta):
 	var IS_SPRINTING = Input.is_action_pressed("Shift")
@@ -187,15 +195,12 @@ func handle_sprinting(delta):
 		sprint_time_accumalted = 0.0
 		camera.fov = lerp(camera.fov, normal_fov, fov_transition_speed * delta)
 
-
-
 func handle_jumping():
 
 	if Input.is_action_just_pressed("Jump") and jump_counter < MAX_JUMPS:
 		jump_counter += 1
 		velocity.y = jump_velocity
 		sfx_jump_sound_effect.play()
-		print(jump_counter)
 	else:
 		if is_on_floor():
 			jump_counter = 0
@@ -213,8 +218,8 @@ func handle_arrowkeys(delta):
 	if Input.is_action_pressed("ui_down"):
 		camera.rotate_x(-AK_ROTATION_SPEED * delta)
 
-func _handle_cameras_rotation(_delta: float) -> void:
-	camera.rotation.x = clamp(camera.rotation.x, deg_to_rad(-40), deg_to_rad(60))
+func handle_cameras_rotation() -> void:
+	camera.rotation.x = clamp(camera.rotation.x, deg_to_rad(-60), deg_to_rad(60))
 
 func check_mantle():
 	var has_ledge = (face_level.is_colliding() and not top_of_head.is_colliding())
@@ -247,30 +252,51 @@ func wall_run_timer():
 		
 		can_wall_run = false
 
+
+
 func check_if_can_wallrun(delta: float):
+	var camera_tween = create_tween()
+	var normal_camera_orientation = Vector3(0,0,0)
+	var running_on_right_wall_camera_orientation = Vector3(0, 0, 15)
+	var running_on_left_wall_camera_orientation = Vector3(0,0,-15)
+	
 	if not can_wall_run:
 		# Reset gravity and camera properties when not wall running
 		gravity = ProjectSettings.get_setting("physics/3d/default_gravity")
 		camera.fov = lerp(camera.fov, normal_fov, fov_transition_speed * delta)
-
+		# Handle wall-running
 	if can_wall_run:
 		if wall_run_right.is_colliding() and not is_on_floor():
-			gravity = ProjectSettings.get_setting("physics/3d/default_gravity") * 0.5
-			velocity.y = max(velocity.y, -0.5)  # Prevent upward flying
-			velocity.x *= 1.3
-			velocity.z *= 1.3
-			camera.fov = lerp(camera.fov, 110.0, fov_transition_speed * delta)
+			gravity *= 0.5  # Reduce gravity
+			camera.fov = lerp(camera.fov, wall_run_fov, fov_transition_speed * delta)
+			camera_tween.tween_property(camera, "rotation_degrees", running_on_right_wall_camera_orientation, 0.3)
+			if Input.is_action_just_pressed("Jump") and jumped_from_left_wall:
+				jumped_from_right_wall = true
+				jumped_from_left_wall = false
+				velocity.y = wall_run_jump_velocity  # Standard jump velocity
+				if true:		
+					camera_tween.tween_property(camera, "rotation_degrees", normal_camera_orientation, .5)
 
 		elif wall_run_left.is_colliding() and not is_on_floor():
-			gravity = ProjectSettings.get_setting("physics/3d/default_gravity") * 0.5
-			velocity.y = max(velocity.y, -0.5)  # Prevent upward flying
-			velocity.x *= 1.3
-			velocity.z *= 1.3
-
-	else:
-		# Reset gravity and camera properties when not wall running
-		gravity = ProjectSettings.get_setting("physics/3d/default_gravity")
-		camera.fov = lerp(camera.fov, normal_fov, fov_transition_speed * delta)
+			camera_tween.tween_property(camera, "rotation_degrees", running_on_left_wall_camera_orientation, 0.3)
+			gravity *= 0.5  # Reduce gravity
+			camera.fov = lerp(camera.fov, wall_run_fov, fov_transition_speed * delta)
+			if Input.is_action_just_pressed("Jump") and jumped_from_right_wall:
+				jumped_from_left_wall = true
+				jumped_from_right_wall = false
+				velocity.y = wall_run_jump_velocity  # Standard jump velocity
+	# Reset state when not wall-running
+		else:
+			if wall_run_left.is_colliding() or wall_run_right.is_colliding() == false:
+				print("This is running all the time, I need to find a way")
+				camera_tween.tween_property(camera, "rotation_degrees", normal_camera_orientation, .3)
+				camera.fov = lerp(camera.fov, normal_fov, fov_transition_speed * delta)
+				gravity = ProjectSettings.get_setting("physics/3d/default_gravity")
+				
+		if is_on_floor():
+			jumped_from_left_wall = true
+			jumped_from_right_wall = true
+			camera_tween.tween_property(camera, "rotation_degrees", normal_camera_orientation, .3)
 
 func _headbob_effect(delta):
 	headbob_time += delta * self.velocity.length()
@@ -309,32 +335,3 @@ func handle_ground_movement(delta):
 		if self.velocity.length() > 0:
 			new_speed /= self.velocity.length()
 		self.velocity *= new_speed
-
-
-
-
-func handle_dashing(delta):
-	if Input.is_action_just_pressed("Dash") and not is_dashing:
-		start_dash()
-
-	if is_dashing:
-		apply_dash(delta)
-
-func start_dash():
-	# Dash in the direction the player is facing
-	dash_direction = neck.global_transform.basis.z.normalized() * -1  # Forward direction
-	velocity = dash_direction * dash_speed
-	is_dashing = true
-	dash_timer = dash_duration
-
-func apply_dash(delta):
-	if dash_timer > 0:
-		# Continue dashing while in the air or on the ground
-		velocity = dash_direction * dash_speed
-		dash_timer -= delta
-	else:
-		# End dash
-		is_dashing = false
-		# You may want to blend back to normal movement, depending on your needs
-		velocity.y = velocity.y  # Maintain current vertical velocity (for gravity control)
-
