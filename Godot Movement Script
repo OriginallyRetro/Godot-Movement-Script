@@ -74,7 +74,7 @@ var jumped_from_right_wall = true
 
 var r_tilt = true
 var l_tilt = true
-
+var camera_should_correct_orientation = false
 
 func _ready():
 	#Unsure for the reason why but when you spawn in your camera rotation is off so that fixes it!
@@ -253,13 +253,10 @@ func wall_run_timer():
 		can_wall_run = false
 
 
-
 func check_if_can_wallrun(delta: float):
 	var camera_tween = create_tween()
-	var normal_camera_orientation = Vector3(0,0,0)
 	var running_on_right_wall_camera_orientation = Vector3(0, 0, 15)
 	var running_on_left_wall_camera_orientation = Vector3(0,0,-15)
-	
 	if not can_wall_run:
 		# Reset gravity and camera properties when not wall running
 		gravity = ProjectSettings.get_setting("physics/3d/default_gravity")
@@ -274,8 +271,7 @@ func check_if_can_wallrun(delta: float):
 				jumped_from_right_wall = true
 				jumped_from_left_wall = false
 				velocity.y = wall_run_jump_velocity  # Standard jump velocity
-				if true:		
-					camera_tween.tween_property(camera, "rotation_degrees", normal_camera_orientation, .5)
+				camera_should_correct_orientation = true
 
 		elif wall_run_left.is_colliding() and not is_on_floor():
 			camera_tween.tween_property(camera, "rotation_degrees", running_on_left_wall_camera_orientation, 0.3)
@@ -285,19 +281,27 @@ func check_if_can_wallrun(delta: float):
 				jumped_from_left_wall = true
 				jumped_from_right_wall = false
 				velocity.y = wall_run_jump_velocity  # Standard jump velocity
+				camera_should_correct_orientation = true
+				
 	# Reset state when not wall-running
 		else:
 			if wall_run_left.is_colliding() or wall_run_right.is_colliding() == false:
-				print("This is running all the time, I need to find a way")
-				camera_tween.tween_property(camera, "rotation_degrees", normal_camera_orientation, .3)
+				reset_camera_orientation()
 				camera.fov = lerp(camera.fov, normal_fov, fov_transition_speed * delta)
 				gravity = ProjectSettings.get_setting("physics/3d/default_gravity")
 				
 		if is_on_floor():
 			jumped_from_left_wall = true
 			jumped_from_right_wall = true
-			camera_tween.tween_property(camera, "rotation_degrees", normal_camera_orientation, .3)
+			reset_camera_orientation()
 
+func reset_camera_orientation() -> void:
+	var normal_camera_orientation = Vector3(0,0,0)
+	if camera_should_correct_orientation:
+			print("This is running all the time, I need to find a way")
+			create_tween().tween_property(camera, "rotation_degrees", normal_camera_orientation, .3)
+			camera_should_correct_orientation = false
+			
 func _headbob_effect(delta):
 	headbob_time += delta * self.velocity.length()
 	camera.transform.origin = Vector3(
