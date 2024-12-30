@@ -81,10 +81,7 @@ var normal_camera_orientation = Vector3(0,0,0)
 
 
 func _ready():
-	#Unsure for the reason why but when you spawn in your camera rotation is off so that fixes it!
-	camera.rotation = Vector3(0, 0, 0)
 	Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
-
 func _unhandled_input(event: InputEvent) -> void:
 	if Input.is_action_pressed("Tab"):
 		$PauseMenu.pause()
